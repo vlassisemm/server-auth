@@ -5,7 +5,7 @@ import time
 from unittest.mock import patch
 
 from odoo import modules
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tests.common import TransactionCase
 
 
@@ -174,3 +174,31 @@ class TestResUsers(TransactionCase):
             self.model_obj.with_context(install_mode=False).create(
                 {"name": "Data user", "login": "data_user", "password": "weak"}
             )
+
+    def test_character_category_counts_above_one(self):
+        user = self._new_record()
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_int("auth_password_policy.minlength", 8)
+        for category in ("lower", "upper", "numeric", "special"):
+            params.set_int(f"password_security.{category}", 2)
+        insufficient = {
+            "lower": "aAA11!!A",
+            "upper": "aaA11!!a",
+            "numeric": "aaAA1!!!",
+            "special": "aaAA11!a",
+        }
+        for category, password in insufficient.items():
+            with self.subTest(category=category):
+                with self.assertRaises(ValidationError), self.cr.savepoint():
+                    user.write({"password": password})
+        user.write({"password": "abCD12!_"})
+        self.assertEqual(len(user.password_history_ids), 2)
+
+    def test_zero_character_category_counts_disable_checks(self):
+        user = self._new_record()
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_int("auth_password_policy.minlength", 8)
+        for category in ("lower", "upper", "numeric", "special"):
+            params.set_int(f"password_security.{category}", 0)
+        user.write({"password": "abcdefgh"})
+        self.assertEqual(len(user.password_history_ids), 2)
