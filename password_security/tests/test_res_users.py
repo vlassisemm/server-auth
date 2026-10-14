@@ -2,7 +2,9 @@
 # License LGPL-3.0 or later (http://www.gnu.org/licenses/lgpl.html).
 
 import time
+from unittest.mock import patch
 
+from odoo import modules
 from odoo.exceptions import UserError
 from odoo.tests.common import TransactionCase
 
@@ -166,3 +168,9 @@ class TestResUsers(TransactionCase):
             }
         )
         test1.unlink()
+
+    def test_password_checks_allow_data_loading_without_current_test(self):
+        with patch.object(modules.module, "current_test", False):
+            self.model_obj.with_context(install_mode=False).create(
+                {"name": "Data user", "login": "data_user", "password": "weak"}
+            )

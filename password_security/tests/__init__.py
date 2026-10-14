@@ -5,3 +5,5 @@ from . import test_password_history
 from . import test_reset_password
 from . import test_signup
 from . import test_totp
+
+from . import test_history_access
