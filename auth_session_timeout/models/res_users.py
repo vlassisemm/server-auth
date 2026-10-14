@@ -67,18 +67,25 @@ class ResUsers(models.Model):
         # Calculate deadline
         deadline = self._auth_timeout_deadline_calculate()
 
-        # Check if past deadline
-        expired = False
-        if deadline is not False:
-            path = session_store().get_session_path(session.sid)
-            try:
-                expired = getmtime(path) < deadline
-            except OSError:
-                _logger.exception(
-                    "Exception reading session file modified time.",
-                )
-                # Force expire the session. Will be resolved with new session.
-                expired = True
+        # Keep activity independent of core session/device metadata saves.
+        # Legacy sessions inherit the file time captured before authentication.
+        last_activity = session.get("_auth_timeout_last_activity")
+        new_activity_clock = last_activity is None
+        if last_activity is None:
+            last_activity = getattr(http.request, "_auth_timeout_last_activity", None)
+            if last_activity is None:
+                path = session_store().get_session_path(session.sid)
+                try:
+                    last_activity = getmtime(path)
+                except OSError:
+                    _logger.exception("Exception reading session file modified time.")
+                    last_activity = False
+            if last_activity is not False:
+                session["_auth_timeout_last_activity"] = last_activity
+
+        expired = deadline is not False and (
+            last_activity is False or last_activity < deadline
+        )
 
         # Try to terminate the session
         terminated = False
@@ -92,7 +99,9 @@ class ResUsers(models.Model):
         # Else, conditionally update session modified and access times
         ignored_urls = self._auth_timeout_get_ignored_urls()
 
-        if http.request.httprequest.path not in ignored_urls:
+        active_request = http.request.httprequest.path not in ignored_urls
+        if active_request:
+            session["_auth_timeout_last_activity"] = time()
             if "path" not in locals():
                 path = session_store().get_session_path(
                     session.sid,
@@ -103,3 +112,8 @@ class ResUsers(models.Model):
                 _logger.exception(
                     "Exception updating session file access/modified times.",
                 )
+
+        if active_request or new_activity_clock:
+            # Error responses skip the normal session save after dispatch.
+            # Persist trusted activity now, including a legacy ignored clock.
+            session_store().save(session)

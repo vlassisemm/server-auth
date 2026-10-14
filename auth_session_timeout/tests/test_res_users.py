@@ -2,6 +2,7 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest import mock
 
 from odoo.http.session import (
@@ -32,6 +33,14 @@ class TestResUsers(TransactionCase):
         with mock.patch.multiple(
             "odoo.addons.auth_session_timeout.models.res_users", **patches
         ) as mocks:
+            if "http" in mocks:
+                session = session_store().new()
+                session.update(
+                    get_default_session(), db=self.env.cr.dbname, uid=self.env.uid
+                )
+                mocks["http"].request = SimpleNamespace(
+                    session=session, httprequest=SimpleNamespace(path="/test")
+                )
             yield mocks
 
     def test_session_validity_no_request(self):
