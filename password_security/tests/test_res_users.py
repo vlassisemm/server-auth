@@ -188,9 +188,12 @@ class TestResUsers(TransactionCase):
             "special": "aaAA11!a",
         }
         for category, password in insufficient.items():
-            with self.subTest(category=category):
-                with self.assertRaises(ValidationError), self.cr.savepoint():
-                    user.write({"password": password})
+            with (
+                self.subTest(category=category),
+                self.assertRaises(ValidationError),
+                self.cr.savepoint(),
+            ):
+                user.write({"password": password})
         user.write({"password": "abCD12!_"})
         self.assertEqual(len(user.password_history_ids), 2)
 
