@@ -7,3 +7,5 @@ from . import test_signup
 from . import test_totp
 
 from . import test_history_access
+
+from . import test_policy_context

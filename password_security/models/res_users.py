@@ -4,10 +4,14 @@
 # License LGPL-3.0 or later (http://www.gnu.org/licenses/lgpl.html).
 
 import re
+from contextvars import ContextVar
 from datetime import timedelta
 
 from odoo import api, fields, models, modules, tools
 from odoo.exceptions import UserError, ValidationError
+from odoo.http import request
+
+_password_demo_loading = ContextVar("password_security_demo_loading", default=False)
 
 
 def delta_now(**kwargs):
@@ -67,7 +71,20 @@ class ResUsers(models.Model):
     def _skip_password_security(self):
         """Skip the checks while loading data files, and when running the
         tests of other modules, so that they don't need compliant passwords."""
-        if self.env.context.get("install_mode"):
+        if self.env.context.get("install_mode") and (
+            _password_demo_loading.get()
+            or (
+                not request
+                and (
+                    not self.env.registry.ready
+                    # The module CLI loads demo as the real superuser offline.
+                    or (
+                        self.env.uid == api.SUPERUSER_ID
+                        and self.env.context.get("install_demo")
+                    )
+                )
+            )
+        ):
             return True
         if not tools.config["test_enable"]:
             return False
