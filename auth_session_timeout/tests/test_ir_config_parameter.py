@@ -25,42 +25,25 @@ class TestIrConfigParameter(common.TransactionCase):
 
 
 class TestIrConfigParameterCaching(common.TransactionCase):
-    def setUp(self):
-        super().setUp()
-        self.db = self.env.cr.dbname
-        self.param_obj = self.env["ir.config_parameter"]
-        self.get_param_called = False
-        test = self
+    def test_delay_changes_are_effective(self):
+        params = self.env["ir.config_parameter"].sudo()
+        self.assertEqual(params._auth_timeout_get_parameter_delay(), 7200)
+        params.set_int("inactive_session_time_out_delay", 7201)
+        self.assertEqual(params._auth_timeout_get_parameter_delay(), 7201)
 
-        def get_param(*args, **kwargs):
-            test.get_param_called = True
-            return orig_get_param(*args[1:], **kwargs)
+    def test_ignored_urls_changes_are_effective(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params._auth_timeout_get_parameter_ignored_urls()
+        params.set_str("inactive_session_time_out_ignored_url", "/example")
+        self.assertEqual(
+            params._auth_timeout_get_parameter_ignored_urls(), ["/example"]
+        )
 
-        orig_get_param = self.param_obj.get_param
-        self.patch(type(self.param_obj), "get_param", get_param)
-
-    def test_auth_timeout_get_parameter_delay_cache(self):
-        """It should cache the parameter call."""
-        self.get_param_called = False
-        self.param_obj._auth_timeout_get_parameter_delay()
-        self.assertTrue(self.get_param_called)
-
-    def test_auth_timeout_get_parameter_ignored_urls_cache(self):
-        """It should cache the parameter call."""
-        self.get_param_called = False
-        self.param_obj._auth_timeout_get_parameter_ignored_urls()
-        self.assertTrue(self.get_param_called)
-
-    def test_check_param_writes_clear_delay_cache(self):
-        self.param_obj._auth_timeout_get_parameter_delay()
-        self.get_param_called = False
-        self.param_obj.set_param("inactive_session_time_out_delay", 7201)
-        self.param_obj._auth_timeout_get_parameter_delay()
-        self.assertTrue(self.get_param_called)
-
-    def test_check_param_writes_clear_ignore_url_cache(self):
-        self.param_obj._auth_timeout_get_parameter_ignored_urls()
-        self.get_param_called = False
-        self.param_obj.set_param("inactive_session_time_out_ignored_url", "example.com")
-        self.param_obj._auth_timeout_get_parameter_ignored_urls()
-        self.assertTrue(self.get_param_called)
+    def test_deleted_delay_uses_default_and_can_be_recreated(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_int("inactive_session_time_out_delay", 10)
+        self.assertEqual(params._auth_timeout_get_parameter_delay(), 10)
+        self.env.ref("auth_session_timeout.inactive_session_time_out_delay").unlink()
+        self.assertEqual(params._auth_timeout_get_parameter_delay(), 7200)
+        params.set_int("inactive_session_time_out_delay", 20)
+        self.assertEqual(params._auth_timeout_get_parameter_delay(), 20)

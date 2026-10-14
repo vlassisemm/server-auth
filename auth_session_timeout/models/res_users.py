@@ -8,7 +8,7 @@ from os.path import getmtime
 from time import time
 
 from odoo import api, http, models
-from odoo.http import SessionExpiredException
+from odoo.http.session import SessionExpiredException, logout, session_store
 
 _logger = logging.getLogger(__name__)
 
@@ -49,7 +49,10 @@ class ResUsers(models.Model):
             False: session timeout cancelled
         """
         if session.db and session.uid:
-            session.logout(keep_db=True)
+            logout(session, keep_db=True)
+            # JSON-RPC errors skip post_dispatch and its normal session save.
+            # Revoke the persisted session before rejecting this request.
+            session_store().delete(session)
         return True
 
     @api.model
@@ -67,7 +70,7 @@ class ResUsers(models.Model):
         # Check if past deadline
         expired = False
         if deadline is not False:
-            path = http.root.session_store.get_session_filename(session.sid)
+            path = session_store().get_session_path(session.sid)
             try:
                 expired = getmtime(path) < deadline
             except OSError:
@@ -84,14 +87,14 @@ class ResUsers(models.Model):
 
         # If session terminated, all done
         if terminated:
-            return SessionExpiredException("Session expired")
+            raise SessionExpiredException("Session expired")
 
         # Else, conditionally update session modified and access times
         ignored_urls = self._auth_timeout_get_ignored_urls()
 
         if http.request.httprequest.path not in ignored_urls:
             if "path" not in locals():
-                path = http.root.session_store.get_session_filename(
+                path = session_store().get_session_path(
                     session.sid,
                 )
             try:

@@ -1,16 +1,16 @@
 # Copyright 2016-2017 LasLabs Inc.
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
 
-import time
 from contextlib import contextmanager
 from unittest import mock
 
+from odoo.http.session import (
+    SessionExpiredException,
+    get_default_session,
+    session_store,
+)
 from odoo.tests.common import TransactionCase
 from odoo.tools.misc import mute_logger
-
-
-class EndTestException(Exception):
-    """It stops tests from continuing"""
 
 
 class TestResUsers(TransactionCase):
@@ -34,74 +34,39 @@ class TestResUsers(TransactionCase):
         ) as mocks:
             yield mocks
 
-    def _auth_timeout_check(self, http_mock):
-        """It wraps ``_auth_timeout_check`` for easier calling"""
-        self.db = mock.MagicMock()
-        self.uid = mock.MagicMock()
-        self.passwd = mock.MagicMock()
-        self.path = "/this/is/a/test/path"
-        get_filename = http_mock.root.session_store.get_session_filename
-        get_filename.return_value = self.path
-        return self.ResUsers._auth_timeout_check()
-
     def test_session_validity_no_request(self):
         """It should return immediately if no request"""
         with self._mock_assets() as assets:
             assets["http"].request = False
-            res = self._auth_timeout_check(assets["http"])
+            res = self.ResUsers._auth_timeout_check()
             self.assertFalse(res)
 
-    def test_session_validity_gets_session_file(self):
-        """It should call get the session file for the session id"""
-        with self._mock_assets() as assets:
-            get_params = assets["http"].request.env[""].get_session_parameters
-            get_params.return_value = 0, []
-            store = assets["http"].root.session_store
-            store.get_session_filename.side_effect = EndTestException
-            with self.assertRaises(EndTestException):
-                self._auth_timeout_check(assets["http"])
-            store.get_session_filename.assert_called_once_with(
-                assets["http"].request.session.sid,
-            )
-
-    def test_session_validity_logout(self):
-        """It should log out of session if past deadline"""
-        with self._mock_assets(["http", "getmtime", "utime"]) as assets:
-            get_params = assets["http"].request.env[""].get_session_parameters
-            get_params.return_value = -9999, []
-            assets["getmtime"].return_value = 0
-            self._auth_timeout_check(assets["http"])
-            assets["http"].request.session.logout.assert_called_once_with(
-                keep_db=True,
-            )
-
-    def test_session_validity_updates_utime(self):
-        """It should update utime of session file if not expired"""
-        with self._mock_assets(["http", "getmtime", "utime"]) as assets:
-            get_params = assets["http"].request.env[""].get_session_parameters
-            get_params.return_value = 9999, []
-            assets["getmtime"].return_value = time.time()
-            self._auth_timeout_check(assets["http"])
-            assets["utime"].assert_called_once_with(
-                assets["http"].root.session_store.get_session_filename(),
-                None,
-            )
+    def test_session_termination_clears_authentication(self):
+        session = session_store().new()
+        session.update(get_default_session(), db=self.env.cr.dbname, uid=self.env.uid)
+        self.assertTrue(self.ResUsers._auth_timeout_session_terminate(session))
+        self.assertFalse(session.uid)
+        self.assertEqual(session.db, self.env.cr.dbname)
+        self.assertTrue(session.should_rotate)
 
     @mute_logger("odoo.addons.auth_session_timeout.models.res_users")
-    def test_session_validity_os_error_guard(self):
-        """It should properly guard from OSError & return"""
-        with self._mock_assets(["http", "utime", "getmtime"]) as assets:
-            get_params = assets["http"].request.env[""].get_session_parameters
-            get_params.return_value = 0, []
+    def test_unreadable_session_is_rejected(self):
+        with self._mock_assets(
+            ["http", "getmtime", "logout", "session_store"]
+        ) as assets:
             assets["getmtime"].side_effect = OSError
-            self._auth_timeout_check(assets["http"])
+            with self.assertRaises(SessionExpiredException):
+                self.ResUsers._auth_timeout_check()
 
-    def test_on_timeout_session_loggedout(self):
-        with self._mock_assets(["http", "getmtime"]) as assets:
+    def test_session_termination_can_be_cancelled(self):
+        with self._mock_assets(
+            ["http", "getmtime", "utime", "session_store"]
+        ) as assets:
             assets["getmtime"].return_value = 0
-            assets["http"].request.session.uid = self.env.uid
-            assets["http"].request.session.dbname = self.env.cr.dbname
-            assets["http"].request.session.sid = 123
-            assets["http"].request.session.logout = mock.Mock()
-            self.ResUsers._auth_timeout_check()
-            self.assertTrue(assets["http"].request.session.logout.called)
+            with mock.patch.object(
+                type(self.ResUsers),
+                "_auth_timeout_session_terminate",
+                return_value=False,
+            ):
+                self.assertFalse(self.ResUsers._auth_timeout_check())
+            assets["utime"].assert_called_once()
